@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAP Moodle Helper
 // @namespace    eap-local-helper
-// @version      3.0.5
+// @version      3.0.6
 // @description  Αυτόματο χρονοδιάγραμμα μελέτης και ημερολόγιο ΕΑΠ
 // @match        https://courses.eap.gr/*
 // @grant        none
@@ -172,7 +172,7 @@
   window.addEventListener('focus',update);
   setInterval(update,60000);
 
-// Calendar panel (preserved from 2.1.1)
+// Calendar panel: refresh without clearing existing events
 (function () {
     'use strict';
     const calendar = '/calendar/view.php?view=upcoming&course=1';
@@ -216,33 +216,72 @@
     const details = el('details');
     const summary = el('summary','📅 Επόμενες εργασίες, ΟΣΣ και άλλα γεγονότα');
     summary.style.cssText = 'cursor:pointer;font-weight:bold;margin:6px 0';
-    const status = el('p');
+    const status = el('span');
     status.setAttribute('role','status');
+    const toolbar = el('div');
+    toolbar.style.cssText = 'display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 12px;margin:8px 0';
     const list = el('ul');
-    list.style.cssText = 'padding-left:22px;margin:8px 0';
-    const link = el('a','Πλήρες ημερολόγιο Moodle ↗');
+    list.style.cssText = 'list-style:none;padding:0;margin:8px 0';
+    const link = el('a','Πλήρες ημερολόγιο μαθημάτων μου ↗');
     link.href = calendar;
-    const refresh = el('button','Ανανέωση');
+    const refreshLabel = '↻ Ανανέωση γεγονότων';
+    const refresh = el('button',refreshLabel);
     refresh.type = 'button';
-    refresh.style.marginLeft = '12px';
-    details.append(summary,status,list,link,refresh);
+    refresh.style.cssText = 'font:inherit;min-width:12em';
+    refresh.title = 'Ανάκτηση των προσεχών γεγονότων από το ημερολόγιο των μαθημάτων μου';
+    toolbar.append(status,refresh);
+    details.append(summary,toolbar,list,link);
     panel.append(details);
-    let loaded = false, busy = false;
+    let loaded = false, busy = false, lastStatus = '';
+    // Keep an on-screen event at the same position if the list changes.
+    function updateList(fragment, message) {
+        let scroller = list.parentElement;
+        while (scroller && scroller !== document.body && scroller !== document.documentElement) {
+            if (/(auto|scroll|overlay)/.test(getComputedStyle(scroller).overflowY) && scroller.scrollHeight > scroller.clientHeight) break;
+            scroller = scroller.parentElement;
+        }
+        if (scroller === document.body || scroller === document.documentElement) scroller = null;
+        const top = scroller ? scroller.getBoundingClientRect().top + scroller.clientTop : 0;
+        const bottom = scroller ? top + scroller.clientHeight : window.innerHeight;
+        const oldItems = [...list.children];
+        const newItems = [...fragment.children];
+        const newIds = new Set(newItems.map(item=>item.dataset.eapEventId));
+        const anchor = details.open && oldItems.find(item=>{
+            const r = item.getBoundingClientRect();
+            return newIds.has(item.dataset.eapEventId) && r.bottom > top && r.top < bottom;
+        });
+        const oldTop = anchor ? anchor.getBoundingClientRect().top : null;
+        // If nothing has changed, leave the original DOM (and focus) intact.
+        if (oldItems.length !== newItems.length || oldItems.some((item,i)=>!item.isEqualNode(newItems[i]))) {
+            list.replaceChildren(fragment);
+        }
+        if (status.textContent !== message) status.textContent = message;
+        lastStatus = message;
+        if (anchor) {
+            const replacement = [...list.children].find(item=>item.dataset.eapEventId===anchor.dataset.eapEventId);
+            if (replacement) {
+                const delta = replacement.getBoundingClientRect().top - oldTop;
+                if (Math.abs(delta)>1) {
+                    if (scroller) scroller.scrollBy({top:delta,behavior:'instant'});
+                    else window.scrollBy({top:delta,behavior:'instant'});
+                }
+            }
+        }
+    }
     async function load() {
         if (busy) return;
         busy = true;
         refresh.disabled = true;
-        status.textContent = 'Ανάγνωση ημερολογίου Moodle…';
-        list.replaceChildren();
+        refresh.textContent = '↻ Ανανέωση…';
+        if (!loaded) status.textContent = 'Ανάγνωση ημερολογίου μαθημάτων…';
         try {
             const response = await fetch(calendar,{credentials:'same-origin',cache:'no-store'});
             if (!response.ok || new URL(response.url).pathname.includes('/login/')) throw Error('calendar');
             const doc = new DOMParser().parseFromString(await response.text(),'text/html');
             const events = [...doc.querySelectorAll('[data-type="event"][data-event-id]')];
             if (!events.length) {
-                status.textContent = doc.querySelector('.calendar-no-results')
-                    ? 'Το Moodle δεν εμφανίζει προσεχή γεγονότα στο επιλεγμένο διάστημα.'
-                    : 'Δεν αναγνωρίστηκε η μορφή του ημερολογίου. Άνοιξε τον σύνδεσμο παρακάτω.';
+                if (!doc.querySelector('.calendar-no-results')) throw Error('format');
+                updateList(document.createDocumentFragment(),'Δεν βρέθηκαν προσεχή γεγονότα στο ημερολόγιο των μαθημάτων μου.');
                 loaded = true;
                 return;
             }
@@ -275,12 +314,13 @@
                 if (days !== null && days < 0) continue;
                 const course = event.querySelector('a[href*="/course/view.php"]')?.textContent?.trim();
                 const type = /ΕΞΕΤΑΣ/i.test(name) ? ['Εξέταση','#a65d13'] : /ΕΡΓΑΣΤΗΡ/i.test(name) ? ['Εργαστήριο','#287950'] : /ΟΣΣ/i.test(name) ? ['ΟΣΣ','#285e87'] : /οφείλεται/i.test(name) || header?.querySelector('img[src*="/assign/"]') ? ['Εργασία','#77136e'] : ['Γεγονός','#666'];
-                rows.push({name, stamp:valid?stamp:Infinity, dateText, hours, days, course, type, anchor});
+                rows.push({id, name, stamp:valid?stamp:Infinity, dateText, hours, days, course, type, anchor});
             }
             rows.sort((a,b)=>a.stamp-b.stamp);
-            list.style.cssText='list-style:none;padding:0;margin:8px 0';
+            const fragment = document.createDocumentFragment();
             for (const row of rows) {
                 const item = el('li');
+                item.dataset.eapEventId = row.id;
                 item.style.cssText=`border-left:4px solid ${row.type[1]};padding:8px 12px;margin:0 0 8px;border-bottom:1px solid #ddd`;
                 const label = el('div',row.type[0]);
                 label.style.cssText=`color:${row.type[1]};font-weight:bold;font-size:12px`;
@@ -299,14 +339,15 @@
                     const remaining = el('div',row.days===0?'Σήμερα':row.days===1?'Αύριο':`Σε ${row.days} ημέρες`);
                     remaining.style.fontWeight='bold'; item.append(remaining);
                 }
-                list.append(item);
+                fragment.append(item);
             }
-            status.textContent = rows.length ? `${rows.length} γεγονότα από το ημερολόγιο του Moodle.` : 'Δεν βρέθηκαν επόμενα γεγονότα.';
+            updateList(fragment, rows.length === 1 ? '1 προσεχές γεγονός από το ημερολόγιο των μαθημάτων μου.' : rows.length ? `${rows.length} προσεχή γεγονότα από το ημερολόγιο των μαθημάτων μου.` : 'Δεν βρέθηκαν προσεχή γεγονότα στο ημερολόγιο των μαθημάτων μου.');
             loaded = true;
         } catch (e) {
-            status.textContent = 'Δεν ήταν δυνατή η ανάγνωση. Δοκίμασε Ανανέωση ή άνοιξε το ημερολόγιο.';
+            status.textContent = loaded ? `${lastStatus} Η ανανέωση απέτυχε· διατηρούνται τα προηγούμενα δεδομένα.` : 'Δεν ήταν δυνατή η ανάγνωση. Δοκίμασε Ανανέωση ή άνοιξε το ημερολόγιο.';
         } finally {
             busy = false;
+            refresh.textContent = refreshLabel;
             refresh.disabled = false;
         }
     }
