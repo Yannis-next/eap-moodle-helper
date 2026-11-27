@@ -1,7 +1,10 @@
+// @homepageURL  https://yannis-next.github.io/eap-moodle-helper/
+// @updateURL    https://yannis-next.github.io/eap-moodle-helper/EAP-Moodle-Helper.user.js
+// @downloadURL  https://yannis-next.github.io/eap-moodle-helper/EAP-Moodle-Helper.user.js
 // ==UserScript==
 // @name         EAP Moodle Helper
 // @namespace    eap-local-helper
-// @version      3.0.3
+// @version      3.0.4
 // @description  Αυτόματο χρονοδιάγραμμα μελέτης και ημερολόγιο ΕΑΠ
 // @match        https://courses.eap.gr/*
 // @grant        none
