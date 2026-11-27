@@ -1,7 +1,4 @@
 // ==UserScript==
-// @homepageURL  https://yannis-next.github.io/eap-moodle-helper/
-// @updateURL    https://yannis-next.github.io/eap-moodle-helper/EAP-Moodle-Helper.user.js
-// @downloadURL  https://yannis-next.github.io/eap-moodle-helper/EAP-Moodle-Helper.user.js
 // @name         EAP Moodle Helper
 // @namespace    eap-local-helper
 // @version      3.0.4
@@ -9,6 +6,9 @@
 // @match        https://courses.eap.gr/*
 // @grant        none
 // @run-at       document-idle
+// @homepageURL  https://yannis-next.github.io/eap-moodle-helper/
+// @updateURL    https://yannis-next.github.io/eap-moodle-helper/EAP-Moodle-Helper.user.js
+// @downloadURL  https://yannis-next.github.io/eap-moodle-helper/EAP-Moodle-Helper.user.js
 // ==/UserScript==
 (function () {
   'use strict';
