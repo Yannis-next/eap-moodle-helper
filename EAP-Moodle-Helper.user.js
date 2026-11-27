@@ -1,7 +1,7 @@
+// ==UserScript==
 // @homepageURL  https://yannis-next.github.io/eap-moodle-helper/
 // @updateURL    https://yannis-next.github.io/eap-moodle-helper/EAP-Moodle-Helper.user.js
 // @downloadURL  https://yannis-next.github.io/eap-moodle-helper/EAP-Moodle-Helper.user.js
-// ==UserScript==
 // @name         EAP Moodle Helper
 // @namespace    eap-local-helper
 // @version      3.0.4
