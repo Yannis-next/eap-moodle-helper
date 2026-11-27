@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAP Moodle Helper
 // @namespace    eap-local-helper
-// @version      3.0.4
+// @version      3.0.5
 // @description  Αυτόματο χρονοδιάγραμμα μελέτης και ημερολόγιο ΕΑΠ
 // @match        https://courses.eap.gr/*
 // @grant        none
