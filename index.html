@@ -29,8 +29,14 @@
 @media(max-width:700px){.guide>summary{padding:13px 15px;font-size:16px}.guide-body{padding:14px}.guide figcaption h3{font-size:16px}}
 
 .benefits-intro{margin:0 0 12px}.privacy-content p{margin:0 0 10px}.privacy-content p:last-child{margin-bottom:0}
+
+.install-success{color:var(--green);font-size:13px;font-weight:600;margin:10px 0 0}
+.install-notes{border-top:1px solid var(--line);margin-top:16px;padding-top:14px}
+.install-notes h3{margin:0 0 8px;font-size:15px;line-height:1.5}
+.install-notes p+p{margin-top:10px}
+.guide figcaption .guide-troubleshooting{margin-top:9px}
 </style>
-<script src="https://cdn.counter.dev/script.js" data-id="47ee4eba-4db4-470b-afd4-a7f19971bc36" data-utcoffset="2"></script>
+<script data-id="47ee4eba-4db4-470b-afd4-a7f19971bc36" data-utcoffset="2" src="https://cdn.counter.dev/script.js"></script>
 </head>
 <body><main>
 <header class="hero"><div><div class="eyebrow">ΔΟΚΙΜΑΣΤΙΚΗ ΕΚΔΟΣΗ · 3.0.5</div><h1>EAP Moodle Helper</h1><p class="tagline">Από φοιτητές, για φοιτητές.</p><p class="sub">Λιγότερη αναζήτηση, περισσότερος χρόνος για μελέτη.</p></div><a class="cta" href="#installation">Οδηγίες εγκατάστασης ↓</a></header>
@@ -43,9 +49,17 @@
 <div class="weeks" id="weeks"><span class="weeks-label">Εβδομάδες Μελέτης</span></div><div class="section-title" id="section-title">Εβδομάδα 11</div><p class="hint">Το πράσινο περίγραμμα δείχνει την τρέχουσα εβδομάδα. Το μοβ κουμπί δείχνει την επιλεγμένη. Δοκιμάστε τη μετάβαση και ανοίξτε τις επόμενες υποχρεώσεις.</p></div></section>
 <p class="hint">Διαδραστική προεπισκόπηση με ενδεικτικά δεδομένα της 26/11/2026. Δεν διαβάζει προσωπικά στοιχεία ή το ημερολόγιό σας. Η πραγματική λειτουργία γίνεται μέσα στο Moodle μετά την εγκατάσταση.</p>
 <div class="cards"><section class="card benefits"><h2>Τι προσφέρει</h2>
-<p class="benefits-intro">Το EAP Moodle Helper συγκεντρώνει τις σημαντικότερες πληροφορίες για τη μελέτη στην κορυφή των σελίδων του Moodle. Έτσι διευκολύνει την καθημερινή χρήση της πλατφόρμας, ιδιαίτερα για τους νέους φοιτητές που ακόμη εξοικειώνονται με αυτήν.</p>
+<p class="benefits-intro">Το <strong>EAP Moodle Helper</strong> συγκεντρώνει τις σημαντικότερες πληροφορίες για τη μελέτη στην κορυφή των σελίδων του Moodle. Έτσι διευκολύνει την καθημερινή χρήση της πλατφόρμας, ιδιαίτερα για τους νέους φοιτητές που ακόμη εξοικειώνονται με αυτήν.</p>
 <ul><li>Αυτόματη ένδειξη της τρέχουσας εβδομάδας μελέτης από το επίσημο χρονοδιάγραμμα της Θ.Ε., χωρίς να χρειάζεται να ανοίγετε κάθε φορά το αρχείο Excel.</li><li>Επισήμανση και άμεση μετάβαση στην τρέχουσα εβδομάδα, ακόμη κι αν μελετάτε υλικό προηγούμενων εβδομάδων.</li><li>Αναδιπλούμενη προβολή εργασιών, ΟΣΣ, εργαστηρίων και εξετάσεων από το ημερολόγιο του Moodle, σε ένα σημείο.</li><li>Ημερομηνίες, ώρες και αντίστροφη μέτρηση για καλύτερο έλεγχο των προθεσμιών και προγραμματισμό της μελέτης.</li><li>Αυτόματες αναβαθμίσεις μέσω Tampermonkey, εφόσον είναι ενεργοποιημένες στις ρυθμίσεις της επέκτασης.</li><li>Δωρεάν χρήση και ανοικτός κώδικας (MIT License).</li></ul></section>
-<section class="card" id="installation"><h2>Εγκατάσταση σε φυλλομετρητές</h2><p class="small">Δοκιμασμένο σε Google Chrome, Microsoft Edge, Opera και Mozilla Firefox σε υπολογιστές, καθώς και σε Firefox για Android.</p><ol><li>Εγκαταστήστε το <a href="https://www.tampermonkey.net/">Tampermonkey</a>.</li><li>Στις λεπτομέρειες της επέκτασης ενεργοποιήστε «Να επιτρέπονται τα σενάρια χρήστη», εφόσον εμφανίζεται η επιλογή.</li><li>Πατήστε το κουμπί εγκατάστασης παρακάτω και επιβεβαιώστε στο Tampermonkey.</li></ol><div class="install"><a class="cta" href="https://yannis-next.github.io/eap-moodle-helper/EAP-Moodle-Helper.user.js">Εγκατάσταση EAP Moodle Helper</a></div><p class="small">Αν εμφανιστεί απλός κώδικας, χρησιμοποιήστε την επιλογή «Εισαγωγή από URL» στα εργαλεία του Tampermonkey με τη διεύθυνση του κουμπιού εγκατάστασης. Αν υπάρχει προηγούμενη εγκατάσταση, ενημερώστε την αντί να δημιουργήσετε δεύτερο ενεργό script.</p><p class="small" style="margin-top:10px">Για κινητά Android χρησιμοποιήστε τον Firefox με την επέκταση <a href="https://addons.mozilla.org/en-US/android/addon/tampermonkey/">Tampermonkey</a>. Για αυτόματες αναβαθμίσεις ενεργοποιήστε τον έλεγχο ενημερώσεων και την αυτόματη εγκατάσταση στις ρυθμίσεις του Tampermonkey.</p><ol start="4" class="final-step"><li>Συνδεθείτε στο <a href="https://courses.eap.gr/">Moodle του ΕΑΠ</a> και ανοίξτε μία Θεματική Ενότητα.</li></ol></section></div>
+<section class="card" id="installation"><h2>Εγκατάσταση σε φυλλομετρητές</h2>
+<p class="small">Δοκιμασμένο σε Google Chrome, Microsoft Edge, Opera και Mozilla Firefox σε υπολογιστές, καθώς και σε Firefox για Android.</p>
+<ol><li>Εγκαταστήστε την επέκταση <a href="https://www.tampermonkey.net/">Tampermonkey</a>.</li><li>Στις λεπτομέρειες της επέκτασης ενεργοποιήστε «Να επιτρέπονται τα σενάρια χρήστη», εφόσον εμφανίζεται η επιλογή.</li><li>Πατήστε το παρακάτω κουμπί και επιβεβαιώστε την εγκατάσταση στο Tampermonkey.</li></ol>
+<div class="install"><a class="cta" href="https://yannis-next.github.io/eap-moodle-helper/EAP-Moodle-Helper.user.js">Εγκατάσταση EAP Moodle Helper</a></div>
+<ol class="final-step" start="4"><li>Συνδεθείτε στο <a href="https://courses.eap.gr/">Moodle του ΕΑΠ</a> και ανοίξτε μία Θεματική Ενότητα.</li></ol>
+<p class="install-success">✓ Μόλις εμφανιστεί το χρονοδιάγραμμα, είστε έτοιμοι. Καλή μελέτη!</p>
+<div class="install-notes"><h3>Χρήσιμες πληροφορίες</h3>
+<p class="small"><strong>Android:</strong> Χρησιμοποιήστε τον Firefox με την επέκταση <a href="https://addons.mozilla.org/en-US/android/addon/tampermonkey/">Tampermonkey</a>.</p>
+<p class="small"><strong>Δυσκολεύεστε στην εγκατάσταση;</strong> Ακολουθήστε τις <a href="#installation-guide" id="open-installation-guide">αναλυτικές οδηγίες με εικόνες</a> που βρίσκονται παρακάτω.</p></div></section></div>
 <!-- Αναλυτικές οδηγίες: επεξεργαστείτε τις λεζάντες στα figcaption -->
 <details class="guide" id="installation-guide"><summary>Αναλυτικές οδηγίες εγκατάστασης με εικόνες</summary><div class="guide-body"><p class="guide-intro">Αφού εγκαταστήσετε την επέκταση Tampermonkey, ακολουθήστε τα παρακάτω βήματα. Τα στιγμιότυπα προέρχονται από Google Chrome. Πατήστε σε μια εικόνα για μεγέθυνση.</p>
 <figure id="guide-1">
@@ -57,7 +71,7 @@
   <button type="button" class="guide-image" aria-label="Μεγέθυνση: Λεπτομέρειες Tampermonkey με ενεργοποιημένο διακόπτη σεναρίων χρήστη"><img src="images/2.png" width="670" height="592" loading="lazy" alt="Λεπτομέρειες Tampermonkey με ενεργοποιημένο διακόπτη σεναρίων χρήστη"></button>
 </figure>
 <figure id="guide-4">
-  <figcaption><h3>3. Επιβεβαιώστε την εγκατάσταση</h3><p>Επιστρέψτε στη σελίδα του EAP Moodle Helper και πατήστε το μοβ κουμπί εγκατάστασης. Στην καρτέλα που ανοίγει, πατήστε «Εγκατάσταση».</p></figcaption>
+  <figcaption><h3>3. Επιβεβαιώστε την εγκατάσταση</h3><p>Επιστρέψτε στη σελίδα του EAP Moodle Helper και πατήστε το μοβ κουμπί εγκατάστασης. Στην καρτέλα που ανοίγει, πατήστε «Εγκατάσταση».</p><p class="small guide-troubleshooting">Αν εμφανιστεί απλός κώδικας, χρησιμοποιήστε την επιλογή «Εισαγωγή από URL» στα εργαλεία του Tampermonkey με <a href="https://yannis-next.github.io/eap-moodle-helper/EAP-Moodle-Helper.user.js">τη διεύθυνση εγκατάστασης</a>. Αν υπάρχει προηγούμενη εγκατάσταση, ενημερώστε την αντί να δημιουργήσετε δεύτερο ενεργό script.</p></figcaption>
   <button type="button" class="guide-image" aria-label="Μεγέθυνση: Οθόνη επιβεβαίωσης εγκατάστασης στο Tampermonkey"><img src="images/3.png" width="627" height="705" loading="lazy" alt="Οθόνη επιβεβαίωσης εγκατάστασης στο Tampermonkey"></button>
 </figure>
 <figure id="guide-5">
@@ -70,7 +84,7 @@
   <button type="button" class="guide-image" aria-label="Μεγέθυνση: Πλαίσιο τρέχουσας εβδομάδας μελέτης και κουμπί μετάβασης"><img src="images/5.png" width="777" height="423" loading="lazy" alt="Πλαίσιο τρέχουσας εβδομάδας μελέτης και κουμπί μετάβασης"></button>
 </figure>
 <figure id="guide-7">
-  <figcaption><h3>Επόμενες εργασίες, ΟΣΣ και άλλα γεγονότα</h3><p>Πατήστε τον τίτλο της ενότητας για να εμφανιστούν οι επόμενες υποχρεώσεις από το ημερολόγιο του Moodle, με ημερομηνίες, ώρες και αντίστροφη μέτρηση.</p></figcaption>
+  <figcaption><h3>Επόμενες εργασίες, ΟΣΣ και άλλα γεγονότα</h3><p>Πατήστε τον τίτλο της ενότητας για να εμφανιστούν οι επόμενες υποχρεώσεις από το ημερολόγιο του Moodle, με ημερομηνίες, ώρες και αντίστροφη μέτρηση. Οι ημερομηνίες λειτουργούν ως σύνδεσμοι προς την αντίστοιχη ημέρα στο ημερολόγιο του Moodle, όπου μπορείτε να δείτε τα γεγονότα.</p></figcaption>
   <button type="button" class="guide-image" aria-label="Μεγέθυνση: Αναπτυγμένη λίστα επόμενων γεγονότων"><img src="images/6.png" width="773" height="779" loading="lazy" alt="Αναπτυγμένη λίστα επόμενων γεγονότων"></button>
 </figure>
 <figure id="guide-8">
@@ -182,4 +196,5 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 </script>
 
+<script>document.getElementById('open-installation-guide').addEventListener('click',function(){document.getElementById('installation-guide').open=true;});</script>
 </body></html>
