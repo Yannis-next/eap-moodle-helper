@@ -24,7 +24,7 @@
 
 ## Συμβατότητα
 
-Έχει δοκιμαστεί σε Google Chrome, Microsoft Edge, Opera και Mozilla Firefox σε υπολογιστές, καθώς και σε Firefox για Android.
+Δοκιμασμένο σε Chrome, Firefox, Edge, Opera και Brave σε υπολογιστές, καθώς και σε Firefox για Android.
 
 ## Εγκατάσταση
 
