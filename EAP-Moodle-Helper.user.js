@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         EAP Moodle Helper
 // @namespace    eap-local-helper
-// @version      3.0.8
-// @description  Αυτόματο χρονοδιάγραμμα μελέτης και ημερολόγιο ΕΑΠ
+// @version      4.0.0
+// @description  Χρονοδιάγραμμα μελέτης, ημερολόγιο και αναζήτηση δραστηριοτήτων ΕΑΠ
 // @match        https://courses.eap.gr/*
 // @grant        none
 // @run-at       document-idle
@@ -287,6 +287,34 @@
   window.addEventListener('focus',update);
   setInterval(update,60000);
 
+// Shared, page-local calendar reader: both panels use the same request and snapshot.
+  const upcomingPath = '/calendar/view.php?view=upcoming&course=1';
+  let upcomingSnapshot = null, upcomingPending = null;
+  function getUpcomingCalendar(force=false) {
+    if(upcomingPending)return upcomingPending;
+    if(upcomingSnapshot&&!force)return Promise.resolve(upcomingSnapshot);
+    upcomingPending=Promise.resolve().then(async()=>{
+      const page=new URL(location.href);
+      let doc, base;
+      if(!force&&page.pathname==='/calendar/view.php'&&page.searchParams.get('view')==='upcoming'&&page.searchParams.get('course')==='1'&&(document.querySelector('[data-type="event"][data-event-id]')||document.querySelector('.calendar-no-results'))){
+        doc=document; base=location.href;
+      }else{
+        const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),15000);
+        try{
+          const response=await fetch(upcomingPath,{credentials:'same-origin',cache:'no-store',signal:controller.signal});
+          const final=new URL(response.url);
+          if(!response.ok||final.origin!==location.origin||final.pathname!=='/calendar/view.php')throw Error('calendar');
+          doc=new DOMParser().parseFromString(await response.text(),'text/html');base=response.url;
+        }finally{clearTimeout(timer);}
+      }
+      if(!doc.querySelector('[data-type="event"][data-event-id]')&&!doc.querySelector('.calendar-no-results'))throw Error('format');
+      upcomingSnapshot={doc,base};
+      document.dispatchEvent(new Event('eap-upcoming-updated'));
+      return upcomingSnapshot;
+    }).finally(()=>{upcomingPending=null;});
+    return upcomingPending;
+  }
+
 // Calendar panel: refresh without clearing existing events
 (function () {
     'use strict';
@@ -383,16 +411,14 @@
             }
         }
     }
-    async function load() {
+    async function load(force=false) {
         if (busy) return;
         busy = true;
         refresh.disabled = true;
         refresh.textContent = '↻ Ανανέωση…';
         if (!loaded) status.textContent = 'Ανάγνωση ημερολογίου μαθημάτων…';
         try {
-            const response = await fetch(calendar,{credentials:'same-origin',cache:'no-store'});
-            if (!response.ok || new URL(response.url).pathname.includes('/login/')) throw Error('calendar');
-            const doc = new DOMParser().parseFromString(await response.text(),'text/html');
+            const {doc} = await getUpcomingCalendar(force);
             const events = [...doc.querySelectorAll('[data-type="event"][data-event-id]')];
             if (!events.length) {
                 if (!doc.querySelector('.calendar-no-results')) throw Error('format');
@@ -467,10 +493,264 @@
         }
     }
     details.addEventListener('toggle',()=>{if(details.open && !loaded) load();});
-    refresh.addEventListener('click',load);
+    refresh.addEventListener('click',()=>load(true));
+    document.addEventListener('eap-upcoming-updated',()=>{if(loaded&&!busy)load();});
     update();
     document.addEventListener('eap-schedule-updated',update);
     window.addEventListener('focus',update);
     setInterval(update,60000);
 })();
+
+// Activity and calendar search
+(function () {
+    'use strict';
+    const pageURL = new URL(location.href);
+    const coursePage = pageURL.pathname === '/course/view.php';
+    const calendarPage = pageURL.pathname === '/calendar/view.php';
+    const dashboardPage = ['/', '/index.php', '/my', '/my/', '/my/index.php'].includes(pageURL.pathname);
+    if ((!coursePage && !calendarPage && !dashboardPage) || document.getElementById('eap-activity-search-beta')) return;
+    const courseId = coursePage ? pageURL.searchParams.get('id') : null;
+    const calendarPath = '/calendar/view.php?view=upcoming&course=1';
+    const courseName = coursePage ? document.title.replace(/^(?:Μάθημα|Course):\s*/iu, '').trim() : '';
+
+    const root = document.querySelector('#region-main') || document.querySelector('main') || document.querySelector('#page-content');
+    if (!root) return;
+    const clean = s => String(s || '').replace(/\s+/gu, ' ').trim();
+    const norm = s => clean(s).toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/ς/g, 'σ');
+    const categories = new Map([
+        ['assign', ['Εργασίες', '#77136e', 'Ανάθεση εργασίας']],
+        ['exam', ['Εξετάσεις', '#a65d13', 'Ανάθεση εργασίας']],
+        ['oss', ['ΟΣΣ', '#285e87', '']],
+        ['workshop', ['Εργαστήρια', '#287950', '']],
+        ['quiz', ['Κουίζ', '#a65d13', 'Κουίζ']],
+        ['forum', ['Συζητήσεις – Φόρουμ', '#285e87', 'Φόρουμ']],
+        ['lesson', ['Μαθήματα', '#285e87', 'Μάθημα']],
+        ['feedback', ['Ανατροφοδότηση', '#285e87', 'Ανατροφοδότηση']],
+        ['resource', ['Αρχεία', '#287950', 'Αρχείο']],
+        ['folder', ['Φάκελοι', '#287950', 'Φάκελος']],
+        ['url', ['Σύνδεσμοι', '#64748b', 'Διεύθυνση URL']],
+        ['page', ['Σελίδες', '#287950', 'Σελίδα']],
+        ['book', ['Βιβλία', '#287950', 'Βιβλίο']],
+        ['assigncertificate', ['Βεβαιώσεις', '#64748b', 'Βεβαίωση ΓΕ']],
+        ['customcert', ['Πιστοποιητικά', '#64748b', 'Προσαρμοσμένο πιστοποιητικό']],
+        ['event', ['Άλλα γεγονότα', '#777', '']],
+        ['other', ['Άλλες δραστηριότητες', '#777', '']]
+    ]);
+    function collect() {
+        if (!coursePage) return {groups:new Map(),rows:[]};
+        const sections = [...root.querySelectorAll('[id^="section-"]')].filter(s => /^section-\d+$/.test(s.id));
+        const groups = new Map(), rows = new Map();
+        for (const section of sections) {
+            const heading = [...section.querySelectorAll('h2,h3,h4')].map(h => clean(h.textContent)).find(t => /^(εβδομαδα|week)\s+\d+$/u.test(norm(t)));
+            const number = heading ? Number(heading.match(/\d+$/)[0]) : null;
+            const label = number !== null ? 'Εβδομάδα ' + number : section.id === 'section-0' ? 'Γενική ενότητα' : section.id === 'section-1' && [...section.querySelectorAll('h2,h3,h4')].some(h => norm(h.textContent) === 'πληροφοριεσ') ? 'Πληροφορίες' : 'Ενότητα ' + section.id.slice(8);
+            const key = number !== null ? 'week-' + number : section.id;
+            groups.set(key, {key, label, order:number === null ? Number(section.id.slice(8)) - 1000 : number});
+            for (const a of section.querySelectorAll('a[href*="/mod/"][href*="/view.php"]')) {
+                if (a.closest('[id^="section-"]') !== section) continue;
+                let u; try {u = new URL(a.href, location.href);} catch {continue;}
+                const match = u.pathname.match(/^\/mod\/([a-z][a-z0-9_]*)\/view\.php$/);
+                const id = u.searchParams.get('id');
+                if (u.origin !== location.origin || !match || !/^\d+$/.test(id || '') || u.searchParams.has('action') || u.hash) continue;
+                const mod = match[1];
+                let title = clean(a.textContent);
+                if (!title) continue;
+                const suffix = categories.get(mod)?.[2];
+                if (suffix && title.endsWith(' ' + suffix)) title = title.slice(0, -suffix.length - 1).trim();
+                if (!title) continue;
+                const type = mod === 'assign' && /(?:^|\s)(?:τελικη\s+|επαναληπτικη\s+)?εξεταση(?:\s|$)/u.test(norm(title)) ? 'exam' : categories.has(mod) ? mod : 'other';
+                const rowKey = mod + ':' + id;
+                if (!rows.has(rowKey)) rows.set(rowKey, {title, type, source:'course', groups:new Set(), url:u.origin + u.pathname + '?id=' + id});
+                rows.get(rowKey).groups.add(key);
+            }
+        }
+        return {groups, rows:[...rows.values()]};
+    }
+    const dateFmt = new Intl.DateTimeFormat('el-GR',{timeZone:'Europe/Athens', day:'2-digit', month:'2-digit', year:'numeric'});
+    const dateKey = d => Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Athens',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(d).map(x=>[x.type,x.value]));
+    const day = d => {const p=dateKey(d);return `${p.year}-${p.month}-${p.day}`;};
+    const courseCode = name => norm(name).match(/^([\p{L}]{1,12})\s*[-–]?\s*(\d{1,5}[\p{L}]?)(?=\s|:|[-–—]|$)/u)?.slice(1).join('') || '';
+    function localURL(raw, base=location.href) {
+        try {const u=new URL(raw,base); return u.origin===location.origin && /^https?:$/.test(u.protocol) ? u : null;} catch {return null;}
+    }
+    function eventType(name, event) {
+        const n=norm(name);
+        if (/εξετασ|\bexam\b/u.test(n)) return 'exam';
+        if (/εργαστηρ|\bworkshop\b/u.test(n)) return 'workshop';
+        if (/οσσ/u.test(n)) return 'oss';
+        if (/οφειλεται|εργασι|\bassignment\b/u.test(n) || event.querySelector('img[src*="/assign/"]') || event.dataset.modulename==='assign') return 'assign';
+        if (event.dataset.modulename==='quiz') return 'quiz';
+        return 'event';
+    }
+    function parseUpcoming(doc, base) {
+        const events=[...doc.querySelectorAll('[data-type="event"][data-event-id]')];
+        if (!events.length && !doc.querySelector('.calendar-no-results')) throw Error('Μη αναγνωρίσιμη μορφή ημερολογίου');
+        const rows=new Map();
+        for (const event of events) {
+            const id=event.dataset.eventId;
+            const title=clean(event.dataset.eventTitle || event.querySelector('h3.name')?.textContent);
+            if (!id || !title || rows.has(id)) continue;
+            const header=event.querySelector('.card-header');
+            const date=header?.querySelector('.date');
+            const anchor=date?.querySelector('a[href*="time="]');
+            const dateURL=anchor && localURL(anchor.getAttribute('href'),base);
+            const raw=dateURL?.searchParams.get('time');
+            const stamp=raw && /^\d+$/.test(raw) ? Number(raw)*1000 : NaN;
+            const valid=Number.isFinite(stamp) && !Number.isNaN(new Date(stamp).getTime());
+            if(valid && day(new Date(stamp)) < day(new Date())) continue;
+            const dateText=valid ? dateFmt.format(new Date(stamp)) : clean(anchor?.textContent);
+            const hours=(date?.textContent.match(/\b\d{1,2}:\d{2}\b/g)||[]).join('–');
+            const courseLink=[...event.querySelectorAll('a[href*="/course/view.php"]')].find(a=>{
+                const u=localURL(a.getAttribute('href'),base);return u?.pathname==='/course/view.php' && /^\d+$/.test(u.searchParams.get('id')||'') && u.searchParams.get('id')!=='1';
+            });
+            const linkId=courseLink ? localURL(courseLink.getAttribute('href'),base)?.searchParams.get('id') : '';
+            const attrId=event.dataset.courseId || event.dataset.courseid || '';
+            const cid=linkId || (/^\d+$/.test(attrId) && attrId!=='1' ? attrId : '');
+            const cname=clean(courseLink?.textContent || event.dataset.courseName || event.dataset.coursename);
+            const matchCode=courseCode(courseName), eventCode=courseCode(cname);
+            // Do not assign a calendar event to a course without positive evidence.
+            const titleCode=matchCode && norm(title).split(/[^\p{L}\p{N}]+/u).some((part,i,parts)=>part===matchCode || part+(parts[i+1]||'')===matchCode);
+            const belongs=cid ? cid===courseId : !!(matchCode && (eventCode===matchCode || (!eventCode && titleCode))) || !!(cname && norm(cname)===norm(courseName));
+            if(coursePage && !belongs && (cid || cname)) continue;
+            rows.set(id,{title,type:eventType(title,event),source:'calendar',groups:new Set(),
+                course:belongs && coursePage ? (cname||courseName) : cname || (cid ? 'Θ.Ε. '+cid : 'Χωρίς αναγνωρισμένη Θ.Ε.'),
+                courseKey:cid ? 'course-'+cid : belongs && coursePage ? 'course-'+courseId : cname ? 'name-'+norm(cname) : 'unknown',
+                dateText,hours,stamp:valid?stamp:Infinity,
+                url:dateURL?.pathname==='/calendar/view.php' ? dateURL.href : new URL(calendarPath,location.origin).href});
+        }
+        if(events.length && !rows.size && !coursePage && !events.some(e=>clean(e.dataset.eventTitle||e.querySelector('h3.name')?.textContent))) throw Error('Δεν αναγνωρίστηκαν τίτλοι γεγονότων');
+        return [...rows.values()].sort((a,b)=>a.stamp-b.stamp);
+    }
+    function mount() {
+        if (document.getElementById('eap-activity-search-beta')) return true;
+        const panel = document.getElementById('eap-helper-extra');
+        if (!panel) return false;
+        if (document.getElementById('eap-search-test')) return true; // avoid overlapping console prototype
+        const initial = collect();
+        if (coursePage && !initial.groups.size) return false;
+        const el = (tag, text, cls) => {const e=document.createElement(tag); if(text)e.textContent=text; if(cls)e.className=cls; return e;};
+        const details=el('details'); details.id='eap-activity-search-beta';
+        const summary=el('summary','🔎 Αναζήτηση εργασιών, δραστηριοτήτων και γεγονότων');
+        const search=el('input'); search.type='search'; search.placeholder='Αναζήτηση λέξης ή φράσης…'; search.setAttribute('aria-label','Λέξη ή φράση αναζήτησης'); search.spellcheck=false; search.autocomplete='off';
+        const filters=el('div','','eap-search-filters');
+        const category=el('select'); category.setAttribute('aria-label','Κατηγορία δραστηριότητας');
+        const week=el('select'); week.setAttribute('aria-label',coursePage?'Πηγή, εβδομάδα ή ενότητα':'Θεματική Ενότητα');
+        filters.append(search,category,week);
+        const toolbar=el('div','','eap-search-toolbar');
+        const status=el('span'); status.setAttribute('role','status'); status.setAttribute('aria-live','polite');
+        const reset=el('button','↻ Καθαρισμός φίλτρων'); reset.type='button'; toolbar.append(status,reset);
+        const list=el('div','','eap-search-results');
+        list.setAttribute('role','list'); list.setAttribute('aria-label','Αποτελέσματα αναζήτησης');
+        const note=el('div','','eap-search-note');
+        const calendarStatus=el('span'); calendarStatus.setAttribute('role','status');
+        const refreshCalendar=el('button','↻ Ανανέωση ημερολογίου'); refreshCalendar.type='button';
+        const fullCalendar=el('a','Πλήρες ημερολόγιο ↗'); fullCalendar.href=calendarPath;
+        note.append(calendarStatus,refreshCalendar,fullCalendar);
+        const style=el('style'); style.id='eap-activity-search-beta-css';
+        style.textContent=`
+#eap-activity-search-beta {border-top:1px solid #d5d5df;margin-top:12px;padding-top:10px;min-width:0;container-type:inline-size;container-name:eap-search}
+#eap-activity-search-beta summary {font-weight:bold;cursor:pointer;margin:0}
+#eap-activity-search-beta input[type="search"] {display:block!important;width:100%!important;max-width:none!important;box-sizing:border-box;height:38px;min-width:0!important;padding:7px 10px;border:1px solid #c8c8d2;border-radius:5px;margin:0!important;font:inherit;background:inherit;color:inherit}
+#eap-activity-search-beta .eap-search-filters {display:grid;grid-template-columns:minmax(0,1.4fr) repeat(2,minmax(0,1fr));gap:8px;align-items:center;margin-top:12px}
+#eap-activity-search-beta select {width:100%!important;max-width:100%;min-width:0!important;box-sizing:border-box;height:38px;min-height:38px;border:1px solid #c8c8d2;border-radius:5px;padding:5px 8px;font:inherit;background-color:inherit;color:inherit;margin:0!important}
+#eap-activity-search-beta input:focus,#eap-activity-search-beta select:focus {border-color:#77136e!important;box-shadow:0 0 0 2px #77136e20!important;outline:1px solid #77136e}
+#eap-activity-search-beta .eap-search-toolbar {display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 12px;margin:8px 0 4px;line-height:1.5;font-size:13px}
+#eap-activity-search-beta [role="status"] {opacity:.85}
+#eap-activity-search-beta button {appearance:none;background:transparent!important;color:#77136e!important;border:0!important;box-shadow:none!important;padding:4px 0!important;margin:0!important;font:inherit!important;font-weight:normal!important;cursor:pointer}
+#eap-activity-search-beta button:hover,#eap-activity-search-beta button:focus-visible {text-decoration:underline!important}
+#eap-activity-search-beta .eap-search-results {max-height:420px;overflow-y:auto;overflow-wrap:anywhere;padding-right:6px}
+#eap-activity-search-beta .eap-search-result {padding:6px 12px;margin:6px 0;border-left:4px solid var(--eap-type-color,#777)}
+#eap-activity-search-beta .eap-search-meta {font-size:12px;opacity:.85}
+#eap-activity-search-beta a {color:#77136e!important;font-weight:500;overflow-wrap:anywhere}
+#eap-activity-search-beta a:hover,#eap-activity-search-beta a:focus-visible {text-decoration:underline!important}
+#eap-activity-search-beta .eap-search-note {font-size:12px;opacity:.85;margin-top:6px;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
+@container eap-search (max-width:760px) {
+ #eap-activity-search-beta .eap-search-filters {grid-template-columns:repeat(2,minmax(0,1fr))}
+ #eap-activity-search-beta input[type="search"] {grid-column:1/-1}
+}
+@container eap-search (max-width:480px) {
+ #eap-activity-search-beta .eap-search-filters {grid-template-columns:minmax(0,1fr)}
+}
+@supports not (container-type:inline-size) {
+ @media (max-width:800px) {#eap-activity-search-beta .eap-search-filters {grid-template-columns:repeat(2,minmax(0,1fr))} #eap-activity-search-beta input[type="search"] {grid-column:1/-1}}
+ @media (max-width:520px) {#eap-activity-search-beta .eap-search-filters {grid-template-columns:minmax(0,1fr)}}
+}
+@media (prefers-color-scheme:dark) {#eap-activity-search-beta a,#eap-activity-search-beta button {color:inherit!important;text-decoration:underline} }
+`;
+        document.head.append(style);
+        let data=initial, events=[], loaded=false, loading=false, failed=false;
+        function options(select, label, entries) {
+            const selected=select.value;
+            const first=el('option',label); first.value='';
+            select.replaceChildren(first);
+            for(const [key,label] of entries){const opt=el('option',label);opt.value=key;select.append(opt);}
+            if([...select.options].some(o=>o.value===selected))select.value=selected;
+        }
+        const combined=()=>[...data.rows,...events];
+        function refreshData(){
+            data=collect();
+            const used=new Set(combined().map(r=>r.type));
+            options(category,'Όλες οι κατηγορίες',[...categories].filter(([key])=>used.has(key)).map(([key,v])=>[key,v[0]]));
+            if(coursePage) {
+                options(week,'Όλες οι πηγές', [['activities','Δραστηριότητες Θ.Ε.'],['calendar','Ημερολόγιο'],... [...data.groups.values()].sort((a,b)=>a.order-b.order).map(g=>[g.key,g.label])]);
+            } else {
+                const courses=new Map(events.map(r=>[r.courseKey,r.course]));
+                options(week,'Όλες οι Θ.Ε.',[...courses].sort((a,b)=>a[1].localeCompare(b[1],'el')));
+            }
+            render();
+        }
+        function render(){
+            const query=norm(search.value), all=combined();
+            const found=all.filter(r=>{
+                if(category.value && r.type!==category.value)return false;
+                if(week.value) {
+                    if(!coursePage && r.courseKey!==week.value)return false;
+                    if(coursePage && (week.value==='activities' ? r.source!=='course' : week.value==='calendar' ? r.source!=='calendar' : !r.groups.has(week.value)))return false;
+                }
+                const labels=[...r.groups].map(k=>data.groups.get(k)?.label||'').join(' ');
+                return norm([r.title,categories.get(r.type)[0],labels,r.course,r.dateText,r.hours,r.source==='calendar'?'Ημερολόγιο':''].filter(Boolean).join(' ')).includes(query);
+            });
+            status.textContent=`${found.length} από ${all.length} αποτελέσματα`;
+            const frag=document.createDocumentFragment();
+            for(const row of found){
+                const item=el('div','','eap-search-result');item.setAttribute('role','listitem');
+                item.style.setProperty('--eap-type-color',categories.get(row.type)[1]);
+                const labels=[...row.groups].map(k=>data.groups.get(k)?.label||'').join(', ');
+                const meta=el('div',row.source==='calendar' ? [row.course,'Ημερολόγιο',row.dateText||'Ημερομηνία μη διαθέσιμη',row.hours,categories.get(row.type)[0]].filter(Boolean).join(' · ') : labels+' · '+categories.get(row.type)[0],'eap-search-meta');
+                const link=el('a',row.title+' ↗');link.href=row.url;link.target='_blank';link.rel='noopener noreferrer';
+                item.append(meta,link);frag.append(item);
+            }
+            if(!found.length)frag.append(el('div',loading?'Ανάγνωση ημερολογίου…':failed?'Δεν βρέθηκαν αποτελέσματα στα διαθέσιμα δεδομένα.':'Δεν βρέθηκαν αποτελέσματα.'));
+            list.replaceChildren(frag);list.scrollTop=0;
+            calendarStatus.textContent=loading?'Ανάγνωση προσεχών γεγονότων…':failed?(loaded?'Η ανανέωση απέτυχε. Διατηρούνται τα προηγούμενα γεγονότα.':'Δεν ήταν δυνατή η ανάγνωση του ημερολογίου.'):loaded?'Τίτλοι δραστηριοτήτων και προσεχή γεγονότα.':'Η αναζήτηση αφορά τους τίτλους και τα προσεχή γεγονότα.';
+            if(loaded && !coursePage && !failed && !loading)calendarStatus.textContent='Αναζήτηση στα προσεχή γεγονότα των μαθημάτων.';
+            refreshCalendar.disabled=loading;
+        }
+        async function loadCalendar(force=false,reuse=false){
+            if(loading || (loaded && !force && !reuse))return;
+            loading=true;failed=false;render();
+            try {
+                const {doc,base}=await getUpcomingCalendar(force);
+                events=parseUpcoming(doc,base);
+                loaded=true;
+            } catch {failed=true;}
+            finally {loading=false;refreshData();}
+        }
+        search.addEventListener('input',render);category.addEventListener('change',render);week.addEventListener('change',render);
+        reset.addEventListener('click',()=>{search.value=category.value=week.value='';render();search.focus();});
+        refreshCalendar.addEventListener('click',()=>loadCalendar(true));
+        document.addEventListener('eap-upcoming-updated',()=>{if(loaded&&!loading)loadCalendar(false,true);});
+        details.addEventListener('toggle',()=>{if(details.open){refreshData();loadCalendar();}});
+        details.append(summary,filters,toolbar,list,note);panel.append(details);
+        refreshData();
+        return true;
+    }
+    // Search is mounted independently of whether a compatible study schedule is available.
+    if (!mount()) {
+        const observer=new MutationObserver(()=>{if(mount())observer.disconnect();});
+        observer.observe(root,{childList:true,subtree:true});
+        setTimeout(()=>observer.disconnect(),10000);
+    }
+})();
+
 })();
