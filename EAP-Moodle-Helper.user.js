@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAP Moodle Helper
 // @namespace    eap-local-helper
-// @version      4.0.0
+// @version      4.0.1
 // @description  Χρονοδιάγραμμα μελέτης, ημερολόγιο και αναζήτηση δραστηριοτήτων ΕΑΠ
 // @match        https://courses.eap.gr/*
 // @grant        none
@@ -48,6 +48,48 @@
     if(code)return code[1].toUpperCase()+code[2].toUpperCase();
     return isCourse?name.slice(0,180):'';
   }
+  // Moodle course IDs are internal numbers; retain only verified human-readable course codes.
+  // Resolve labels locally from navigation links, visited courses and existing schedule metadata.
+  const COURSE_LABELS_KEY = 'eap-helper-course-labels-v1';
+  const courseLabels = new Map();
+  try {
+    const saved=JSON.parse(localStorage.getItem(COURSE_LABELS_KEY)||'{}');
+    if(saved && typeof saved==='object' && !Array.isArray(saved))
+      for(const [id,value] of Object.entries(saved))
+        if(/^\d+$/.test(id) && typeof value==='string' && value.length<=40)courseLabels.set(id,value);
+  }catch{}
+  function shortCourseCode(raw){
+    const s=String(raw||'').replace(/\s+/gu,' ').trim().replace(/^(?:Μάθημα|Course):\s*/iu,'');
+    const pattern=/([\p{L}]{1,12})\s*[-–]?\s*(\d{1,5}[\p{L}]?)(?=\s*(?::|[-–—]|$)|\s)/u;
+    let m=s.match(new RegExp('^'+pattern.source,'u'));
+    // Moodle links sometimes prefix the code with an accessible text like "Μάθημα".
+    if(!m)m=s.match(/(?:^|[\s:([{])([\p{Lu}]{2,12})\s*[-–]?\s*(\d{1,5}[\p{L}]?)(?=\s*(?::|[-–—]|$)|\s)/u);
+    if(!m || /^(?:ΘΕ|THE|COURSE|ΜΑΘΗΜΑ)$/iu.test(m[1]))return '';
+    return m[1].toUpperCase()+m[2].toUpperCase();
+  }
+  function rememberCourseLabels(doc=document,base=location.href){
+    let changed=false;
+    function add(id,raw){
+      const code=shortCourseCode(raw);
+      if(!/^\d+$/.test(String(id)) || id==='1' || !code || courseLabels.get(String(id))===code)return;
+      courseLabels.set(String(id),code);changed=true;
+    }
+    for(const a of doc.querySelectorAll('a[href*="course/view.php"]')){
+      let u;try{u=new URL(a.getAttribute('href'),base);}catch{continue;}
+      if(u.origin!==location.origin || u.pathname!=='/course/view.php')continue;
+      const id=u.searchParams.get('id');
+      if(id)for(const text of [a.textContent,a.title,a.getAttribute('aria-label')]){if(shortCourseCode(text)){add(id,text);break;}}
+    }
+    const cached=readCache()?.courses;
+    if(cached)for(const [id,item] of Object.entries(cached))add(id,item?.name);
+    if(courseId)add(courseId,currentCourseName());
+    if(changed){try{localStorage.setItem(COURSE_LABELS_KEY,JSON.stringify(Object.fromEntries(courseLabels)));}catch{}}
+  }
+  function friendlyCourseLabel(id,raw=''){
+    const value=shortCourseCode(raw);
+    if(value)return value;
+    return courseLabels.get(String(id)) || (id ? 'Θ.Ε. '+id : String(raw||'').trim() || 'Χωρίς αναγνωρισμένη Θ.Ε.');
+  }
   function currentCourseName() {
     if(!courseId)return '';
     return courseNameFromTitle(document.title)||courseNameFromTitle(document.querySelector('#page-header h1')?.textContent);
@@ -77,6 +119,7 @@
   }
   refreshCachedCourseName();
   restore();
+  rememberCourseLabels();
   // Minimal ZIP reader for standard XLSX (no external dependencies).
   async function unzip(buffer) {
     const v=new DataView(buffer), bytes=new Uint8Array(buffer), dec=new TextDecoder();
@@ -308,6 +351,7 @@
         }finally{clearTimeout(timer);}
       }
       if(!doc.querySelector('[data-type="event"][data-event-id]')&&!doc.querySelector('.calendar-no-results'))throw Error('format');
+      rememberCourseLabels(doc,base);
       upcomingSnapshot={doc,base};
       document.dispatchEvent(new Event('eap-upcoming-updated'));
       return upcomingSnapshot;
@@ -453,7 +497,14 @@
                 const hours = date?.textContent.match(/\b\d{1,2}:\d{2}\b/g) || [];
                 const days = valid ? Math.round((Date.parse(dayKey(new Date(stamp)))-Date.parse(dateKey()))/86400000) : null;
                 if (days !== null && days < 0) continue;
-                const course = event.querySelector('a[href*="/course/view.php"]')?.textContent?.trim();
+                const courseAnchor = event.querySelector('a[href*="/course/view.php"]');
+                let eventCourseId=event.dataset.courseId || event.dataset.courseid || '';
+                const courseHref=courseAnchor?.getAttribute('href');
+                if(courseHref)try{
+                    const u=new URL(courseHref,location.href);
+                    if(u.origin===location.origin && u.pathname==='/course/view.php')eventCourseId=u.searchParams.get('id')||eventCourseId;
+                }catch{}
+                const course = eventCourseId || courseAnchor ? friendlyCourseLabel(eventCourseId,courseAnchor?.textContent?.trim()) : '';
                 const type = /ΕΞΕΤΑΣ/i.test(name) ? ['Εξέταση','#a65d13'] : /ΕΡΓΑΣΤΗΡ/i.test(name) ? ['Εργαστήριο','#287950'] : /ΟΣΣ/i.test(name) ? ['ΟΣΣ','#285e87'] : /οφείλεται/i.test(name) || header?.querySelector('img[src*="/assign/"]') ? ['Εργασία','#77136e'] : ['Γεγονός','#666'];
                 rows.push({id, name, stamp:valid?stamp:Infinity, dateText, hours, days, course, type, anchor});
             }
@@ -583,6 +634,7 @@
         return 'event';
     }
     function parseUpcoming(doc, base) {
+        rememberCourseLabels(doc,base);
         const events=[...doc.querySelectorAll('[data-type="event"][data-event-id]')];
         if (!events.length && !doc.querySelector('.calendar-no-results')) throw Error('Μη αναγνωρίσιμη μορφή ημερολογίου');
         const rows=new Map();
@@ -613,7 +665,7 @@
             const belongs=cid ? cid===courseId : !!(matchCode && (eventCode===matchCode || (!eventCode && titleCode))) || !!(cname && norm(cname)===norm(courseName));
             if(coursePage && !belongs && (cid || cname)) continue;
             rows.set(id,{title,type:eventType(title,event),source:'calendar',groups:new Set(),
-                course:belongs && coursePage ? (cname||courseName) : cname || (cid ? 'Θ.Ε. '+cid : 'Χωρίς αναγνωρισμένη Θ.Ε.'),
+                course:belongs && coursePage ? friendlyCourseLabel(courseId,courseName) : friendlyCourseLabel(cid,cname),
                 courseKey:cid ? 'course-'+cid : belongs && coursePage ? 'course-'+courseId : cname ? 'name-'+norm(cname) : 'unknown',
                 dateText,hours,stamp:valid?stamp:Infinity,
                 url:dateURL?.pathname==='/calendar/view.php' ? dateURL.href : new URL(calendarPath,location.origin).href});
@@ -688,6 +740,7 @@
         }
         const combined=()=>[...data.rows,...events];
         function refreshData(){
+            rememberCourseLabels();
             data=collect();
             const used=new Set(combined().map(r=>r.type));
             options(category,'Όλες οι κατηγορίες',[...categories].filter(([key])=>used.has(key)).map(([key,v])=>[key,v[0]]));
