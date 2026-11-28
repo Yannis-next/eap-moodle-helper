@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAP Moodle Helper
 // @namespace    eap-local-helper
-// @version      3.0.7
+// @version      3.0.8
 // @description  Αυτόματο χρονοδιάγραμμα μελέτης και ημερολόγιο ΕΑΠ
 // @match        https://courses.eap.gr/*
 // @grant        none
@@ -37,10 +37,33 @@
   function readCache() {
     try {const c=JSON.parse(localStorage.getItem(CACHE)||'null'); if(!c || !c.courses)return null; return c;} catch {return null;}
   }
+  // Moodle course pages expose the official course name in the browser title.
+  function courseNameFromTitle(title) {
+    const clean=String(title||'').replace(/\s+/gu,' ').trim();
+    const prefix=clean.match(/^([^:]+):\s*/u);
+    const isCourse=prefix&&['μαθημα','course'].includes(norm(prefix[1]).trim());
+    const name=isCourse?clean.slice(prefix[0].length).trim():clean;
+    // Recognize letter/number course codes, with or without a separating space.
+    const code=name.match(/^([\p{L}]{1,12})\s*[-–]?\s*(\d{1,5}[\p{L}]?)(?=\s*(?::|[–—]|$))/u);
+    if(code)return code[1].toUpperCase()+code[2].toUpperCase();
+    return isCourse?name.slice(0,180):'';
+  }
+  function currentCourseName() {
+    if(!courseId)return '';
+    return courseNameFromTitle(document.title)||courseNameFromTitle(document.querySelector('#page-header h1')?.textContent);
+  }
+  function refreshCachedCourseName() {
+    if(!courseId)return;
+    const name=currentCourseName(), c=readCache(), entry=c?.courses[courseId];
+    if(!name||!entry||entry.name===name)return;
+    // Migrate old cached labels on visit, without refetching Excel or changing its timestamp.
+    entry.name=name;
+    try{localStorage.setItem(CACHE,JSON.stringify(c));}catch{}
+  }
   function applyEntry(id, entry) {
     schedule=validate(entry.rows);
     lastUpdated=Number.isFinite(entry.saved)&&Number.isFinite(new Date(entry.saved).getTime())?entry.saved:null;
-    sourceCourse=id; sourceName=typeof entry.name==='string'?entry.name:'';
+    sourceCourse=id; sourceName=(id===courseId?currentCourseName():'')||(typeof entry.name==='string'?entry.name:'');
   }
   function restore() {
     const c=readCache(); if(!c)return;
@@ -52,6 +75,7 @@
       try {const entry=c.courses[id]; const rows=validate(entry.rows); if(activeOn(rows,day)){applyEntry(id,entry);return;}} catch {}
     }
   }
+  refreshCachedCourseName();
   restore();
   // Minimal ZIP reader for standard XLSX (no external dependencies).
   async function unzip(buffer) {
@@ -194,7 +218,7 @@
       else if(!entry)source=(all.length>MAX_RESOURCES?'Δεν βρέθηκε συμβατό χρονοδιάγραμμα στα πρώτα '+MAX_RESOURCES+' αρχεία.':failed?'Δεν εντοπίστηκε συμβατό χρονοδιάγραμμα ή ορισμένα αρχεία δεν ήταν προσβάσιμα.':'Δεν βρέθηκε συμβατό χρονοδιάγραμμα στην παρούσα Θ.Ε.');
       else if(!activeOn(entry.rows,day)&&activeOn(schedule,day))source='Βρέθηκε χρονοδιάγραμμα μελλοντικής περιόδου. Διατηρείται το τρέχον.';
       else{
-        const name=(document.querySelector('#page-header h1')||document.querySelector('h1'))?.textContent?.trim().slice(0,180)||'';
+        const name=currentCourseName();
         const saved={rows:entry.rows,saved:Date.now(),resource:entry.resource,name};
         applyEntry(courseId,saved);
         const c=readCache()||{courses:{}};c.courses[courseId]=saved;c.last=courseId;source='';
@@ -243,7 +267,7 @@
     else if(schedule.length){actions.append(document.createTextNode('Ενημέρωση από Χρονοδιάγραμμα ΘΕ'));}
     if(courseId){const refresh=document.createElement('button');refresh.type='button';refresh.className='eap-source-refresh';refresh.textContent=busy?'Ανάγνωση…':'↻ Ανανέωση';refresh.title='Αναζήτηση χρονοδιαγράμματος Excel στην παρούσα Θ.Ε.';refresh.setAttribute('aria-label','Ανανέωση χρονοδιαγράμματος Θ.Ε.');refresh.disabled=busy;refresh.onclick=()=>sync(true);actions.append(refresh);}
     if(actions.childNodes.length)meta.append(actions);
-    if(sourceCourse&&sourceCourse!==courseId&&schedule.length){const provenance=document.createElement('div');provenance.append(document.createTextNode('Κοινό χρονοδιάγραμμα από: '));const a=document.createElement('a');a.href='/course/view.php?id='+encodeURIComponent(sourceCourse);a.textContent=sourceName||'Θ.Ε. '+sourceCourse;a.style.color='inherit';a.style.textDecoration='underline';provenance.append(a);meta.append(provenance);}
+    if(sourceCourse&&sourceCourse!==courseId&&schedule.length){const provenance=document.createElement('div');provenance.append(document.createTextNode(courseId?'Κοινό χρονοδιάγραμμα από: ':'Χρονοδιάγραμμα από: '));const a=document.createElement('a');a.href='/course/view.php?id='+encodeURIComponent(sourceCourse);a.textContent=sourceName||'Θ.Ε. '+sourceCourse;a.style.color='inherit';a.style.textDecoration='underline';provenance.append(a);meta.append(provenance);}
     if(source){const msg=document.createElement('div');msg.setAttribute('role','status');msg.textContent=source;meta.append(msg);}
     if(meta.childNodes.length)banner.append(meta);
     document.querySelectorAll('.eap-current-week').forEach(e=>e.classList.remove('eap-current-week'));
