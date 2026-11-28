@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAP Moodle Helper
 // @namespace    eap-local-helper
-// @version      3.0.6
+// @version      3.0.7
 // @description  Αυτόματο χρονοδιάγραμμα μελέτης και ημερολόγιο ΕΑΠ
 // @match        https://courses.eap.gr/*
 // @grant        none
@@ -15,7 +15,12 @@
   // Shared state: only validated schedules are accepted.
   const CACHE = 'eap-helper-schedule-v3';
   const courseId = location.pathname === '/course/view.php' ? new URLSearchParams(location.search).get('id') : null;
-  let schedule = [], source = '', lastUpdated = null, busy = false;
+  let schedule = [], source = '', lastUpdated = null, busy = false, sourceCourse = null, sourceName = '';
+  const activeOn = (rows, day) => rows.length && rows[0][1] <= day && day <= rows.at(-1)[2];
+  const athensDay = () => {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Athens',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).map(x=>[x.type,x.value]));
+    return `${p.year}-${p.month}-${p.day}`;
+  };
   const norm = s => String(s).normalize('NFD').replace(/\p{M}/gu,'').toLowerCase();
   const addDay = s => new Date(Date.parse(s)+86400000).toISOString().slice(0,10);
   function validate(rows) {
@@ -32,10 +37,20 @@
   function readCache() {
     try {const c=JSON.parse(localStorage.getItem(CACHE)||'null'); if(!c || !c.courses)return null; return c;} catch {return null;}
   }
+  function applyEntry(id, entry) {
+    schedule=validate(entry.rows);
+    lastUpdated=Number.isFinite(entry.saved)&&Number.isFinite(new Date(entry.saved).getTime())?entry.saved:null;
+    sourceCourse=id; sourceName=typeof entry.name==='string'?entry.name:'';
+  }
   function restore() {
-    const c=readCache(); const entry=courseId ? c?.courses[courseId] : c?.courses[c.last];
-    if(!entry)return;
-    try {schedule=validate(entry.rows); lastUpdated=Number.isFinite(entry.saved)&&Number.isFinite(new Date(entry.saved).getTime())?entry.saved:null;} catch {}
+    const c=readCache(); if(!c)return;
+    const day=athensDay();
+    // Prefer the course's own valid schedule, then the most recently read active schedule.
+    const ids=Object.keys(c.courses).filter(id=>/^\d+$/.test(id)).sort((a,b)=>(c.courses[b]?.saved||0)-(c.courses[a]?.saved||0)||Number(b===c.last)-Number(a===c.last));
+    if(courseId&&ids.includes(courseId)){ids.splice(ids.indexOf(courseId),1);ids.unshift(courseId);}
+    for(const id of ids){
+      try {const entry=c.courses[id]; const rows=validate(entry.rows); if(activeOn(rows,day)){applyEntry(id,entry);return;}} catch {}
+    }
   }
   restore();
   // Minimal ZIP reader for standard XLSX (no external dependencies).
@@ -90,33 +105,105 @@
     if(candidates.length!==1)throw Error('Δεν βρέθηκε μοναδικό χρονοδιάγραμμα');
     return candidates[0];
   }
-  async function fetchLocal(url) {
+  // Only inspect Moodle file resources and direct XLSX links from the course content.
+  const MAX_FILE = 3000000, MAX_RESOURCES = 60;
+  const isXlsx = u => /\.xlsx$/i.test(u.pathname);
+  function candidatesIn(doc, base) {
+    const found=new Map();
+    for(const a of doc.querySelectorAll('a[href]')){
+      let u; try{u=new URL(a.getAttribute('href'),base);}catch{continue;}
+      if(u.origin!==location.origin)continue;
+      const direct=u.pathname.includes('/pluginfile.php/')&&isXlsx(u);
+      if(!direct && !(u.pathname==='/mod/resource/view.php'&&/^\d+$/.test(u.searchParams.get('id')||'')))continue;
+      const label=norm(a.textContent+' '+(a.getAttribute('title')||'')+' '+(a.getAttribute('aria-label')||'')+' '+[...a.querySelectorAll('img[alt]')].map(img=>img.alt).join(' '));
+      const priority=/χρονοδιαγραμμ|χρονοπρογραμμα|schedule|timetable/.test(label)?0:direct||/xlsx|excel|υπολογιστικ/.test(label)?1:2;
+      // A clearly marked non-Excel file need not be downloaded.
+      if(!direct&&priority===2&&/\.(pdf|docx?|pptx?|zip|mp[34]|jpe?g|png)\b/i.test(label))continue;
+      u.hash=''; if(!direct)u.search='?id='+u.searchParams.get('id');
+      const old=found.get(u.href); if(!old||priority<old.priority)found.set(u.href,{url:u.href,priority});
+    }
+    return [...found.values()].sort((a,b)=>a.priority-b.priority);
+  }
+  async function fetchLocal(url, signal) {
     const u=new URL(url,location.href);if(u.origin!==location.origin)throw Error('Εξωτερικός σύνδεσμος');
-    const r=await fetch(u,{credentials:'same-origin',cache:'no-store',redirect:'follow'});
-    if(!r.ok||new URL(r.url).origin!==location.origin||new URL(r.url).pathname.includes('/login/'))throw Error('Αποτυχία πρόσβασης');return r;
+    const r=await fetch(u,{credentials:'same-origin',cache:'no-store',redirect:'follow',signal});
+    if(!r.ok||new URL(r.url).origin!==location.origin||new URL(r.url).pathname.includes('/login/')){r.body?.cancel().catch(()=>{});throw Error('Αποτυχία πρόσβασης');}return r;
+  }
+  async function boundedBytes(r) {
+    if(Number(r.headers.get('content-length'))>MAX_FILE){r.body?.cancel().catch(()=>{});throw Error('Μεγάλο αρχείο');}
+    if(!r.body){const b=await r.arrayBuffer();if(b.byteLength>MAX_FILE)throw Error('Μεγάλο αρχείο');return b;}
+    const reader=r.body.getReader(), chunks=[];let total=0;
+    try{while(true){const {done,value}=await reader.read();if(done)break;total+=value.byteLength;if(total>MAX_FILE){await reader.cancel();throw Error('Μεγάλο αρχείο');}chunks.push(value);}}
+    finally{reader.releaseLock();}
+    const result=new Uint8Array(total);let offset=0;for(const chunk of chunks){result.set(chunk,offset);offset+=chunk.length;}return result.buffer;
+  }
+  async function readWorkbook(r) {
+    const type=(r.headers.get('content-type')||'').toLowerCase();
+    const disposition=r.headers.get('content-disposition')||'';
+    const likely=isXlsx(new URL(r.url))||/\.xlsx(?:["';\s]|$)/i.test(disposition)||/spreadsheetml|octet-stream|application\/zip/.test(type)||!type;
+    if(!likely){r.body?.cancel().catch(()=>{});return null;}
+    try{return await parseXlsx(await boundedBytes(r));}catch{return null;}
+  }
+  async function inspectResource(candidate) {
+    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),12000);
+    try{
+      const r=await fetchLocal(candidate.url,controller.signal);
+      if(!/text\/html|application\/xhtml\+xml/i.test(r.headers.get('content-type')||'')){
+        const rows=await readWorkbook(r);return rows?[{rows,resource:candidate.url}]:[];
+      }
+      const doc=new DOMParser().parseFromString(new TextDecoder().decode(await boundedBytes(r)),'text/html');
+      const files=[...new Set([...doc.querySelectorAll('a[href]')].map(a=>{try{return new URL(a.getAttribute('href'),r.url);}catch{return null;}}).filter(u=>u&&u.origin===location.origin&&u.pathname.includes('/pluginfile.php/')&&isXlsx(u)).map(u=>u.href))];
+      if(files.length>12)throw Error('Πολλά αρχεία Excel');
+      const results=[];
+      for(const url of files){try{const rows=await readWorkbook(await fetchLocal(url,controller.signal));if(rows)results.push({rows,resource:candidate.url});}catch{}}
+      return results;
+    }finally{clearTimeout(timer);}
+  }
+  const sameDates = rows => JSON.stringify(rows.map(r=>r.slice(0,3)));
+  function uniqueSchedule(found, day) {
+    const current=found.filter(x=>activeOn(x.rows,day));
+    const pool=current.length?current:found.filter(x=>x.rows[0][1]>day);
+    const groups=new Map(pool.map(x=>[sameDates(x.rows),x]));
+    return {entry:groups.size===1?[...groups.values()][0]:null, conflict:groups.size>1, active:current.length>0};
   }
   async function sync(force=false) {
     if(!courseId||busy)return;
-    // Fetch once per course; subsequent reads require explicit user action.
-    if(!force&&schedule.length)return;
-    const links=[...document.querySelectorAll('a[href]')].filter(a=>/χρονοδιαγραμμα\s*θ\s*\.?\s*ε/i.test(norm(a.textContent))&&new URL(a.href).pathname==='/mod/resource/view.php');
-    const urls=[...new Set(links.map(a=>a.href))];
-    if(urls.length!==1){source='Δεν εντοπίστηκε μοναδικό χρονοδιάγραμμα Θ.Ε.'+(schedule.length?' · Τοπικό αντίγραφο':'');update();return;}
-    busy=true;source='Ανάκτηση χρονοδιαγράμματος ΕΑΠ…';update();
-    try {
-      const r=await fetchLocal(urls[0]);let file=r;
-      if(/text\/html/i.test(r.headers.get('content-type')||'')){
-        const doc=new DOMParser().parseFromString(await r.text(),'text/html');
-        const files=[...new Set([...doc.querySelectorAll('a[href]')].map(a=>new URL(a.getAttribute('href'),r.url)).filter(u=>u.origin===location.origin&&u.pathname.includes('/pluginfile.php/')&&/\.xlsx$/i.test(u.pathname)).map(u=>u.href))];
-        if(files.length!==1)throw Error('Δεν βρέθηκε μοναδικό XLSX');file=await fetchLocal(files[0]);
+    // Shared data is not proof that this course has already been checked.
+    if(!force&&sourceCourse===courseId&&activeOn(schedule,athensDay()))return;
+    const root=document.querySelector('#region-main')||document.querySelector('main')||document;
+    const all=candidatesIn(root,location.href), candidates=all.slice(0,MAX_RESOURCES);
+    // Briefly remember unsuccessful automatic scans in this browser tab; manual refresh always retries.
+    const scanKey='eap-helper-scan-'+courseId, signature=JSON.stringify(candidates.map(x=>x.url));
+    if(!force){try{const prev=JSON.parse(sessionStorage.getItem(scanKey)||'null');if(prev?.signature===signature&&Date.now()-prev.at<600000)return;}catch{}}
+    if(!candidates.length){source='Δεν βρέθηκε αρχείο χρονοδιαγράμματος στην παρούσα Θ.Ε.';update();return;}
+    busy=true;source='Αναζήτηση χρονοδιαγράμματος…';update();
+    let found=[], failed=0;
+    try{
+      const day=athensDay();
+      // First try likely files, then unnamed file resources if necessary. Four requests at a time.
+      for(const priority of [0,1,2]){
+        const group=candidates.filter(x=>x.priority===priority);
+        for(let i=0;i<group.length;i+=4){
+          const batch=await Promise.allSettled(group.slice(i,i+4).map(inspectResource));
+          for(const result of batch){if(result.status==='fulfilled')found.push(...result.value);else failed++;}
+        }
+        if(priority>=1&&uniqueSchedule(found,day).active)break;
       }
-      const buffer=await file.arrayBuffer();if(buffer.byteLength>3000000)throw Error('Μεγάλο αρχείο');
-      schedule=await parseXlsx(buffer);
-      lastUpdated=Date.now();
-      const c=readCache()||{courses:{}};c.courses[courseId]={rows:schedule,saved:lastUpdated,resource:urls[0]};c.last=courseId;
-      source='';
-      try{localStorage.setItem(CACHE,JSON.stringify(c));}catch{source='Το χρονοδιάγραμμα διαβάστηκε, αλλά δεν αποθηκεύτηκε τοπικά.';}
-    }catch(e){source='Αποτυχία ανάγνωσης: '+e.message+(schedule.length?' · Τοπικό αντίγραφο':'');}
+      const {entry,conflict}=uniqueSchedule(found,day);
+      if(conflict)source='Βρέθηκαν διαφορετικά χρονοδιαγράμματα στην παρούσα Θ.Ε. Δεν έγινε αντικατάσταση.';
+      else if(!entry)source=(all.length>MAX_RESOURCES?'Δεν βρέθηκε συμβατό χρονοδιάγραμμα στα πρώτα '+MAX_RESOURCES+' αρχεία.':failed?'Δεν εντοπίστηκε συμβατό χρονοδιάγραμμα ή ορισμένα αρχεία δεν ήταν προσβάσιμα.':'Δεν βρέθηκε συμβατό χρονοδιάγραμμα στην παρούσα Θ.Ε.');
+      else if(!activeOn(entry.rows,day)&&activeOn(schedule,day))source='Βρέθηκε χρονοδιάγραμμα μελλοντικής περιόδου. Διατηρείται το τρέχον.';
+      else{
+        const name=(document.querySelector('#page-header h1')||document.querySelector('h1'))?.textContent?.trim().slice(0,180)||'';
+        const saved={rows:entry.rows,saved:Date.now(),resource:entry.resource,name};
+        applyEntry(courseId,saved);
+        const c=readCache()||{courses:{}};c.courses[courseId]=saved;c.last=courseId;source='';
+        try{localStorage.setItem(CACHE,JSON.stringify(c));}catch{source='Το χρονοδιάγραμμα διαβάστηκε, αλλά δεν αποθηκεύτηκε τοπικά.';}
+        try{sessionStorage.removeItem(scanKey);}catch{}
+        return;
+      }
+      try{sessionStorage.setItem(scanKey,JSON.stringify({signature,at:Date.now()}));}catch{}
+    }catch{source='Αποτυχία αναζήτησης χρονοδιαγράμματος.';}
     finally{busy=false;update();}
   }
   const fmt = new Intl.DateTimeFormat('el-GR',{day:'numeric',month:'long',year:'numeric',timeZone:'UTC'});
@@ -128,7 +215,10 @@
   style.textContent = `#eap-helper-extra a[href]:hover, #eap-helper-extra a[href]:focus-visible {text-decoration:underline !important;cursor:pointer;} #eap-week-helper{box-sizing:border-box;margin:12px 0 20px;padding:14px 18px;border-radius:8px;background:linear-gradient(110deg,#75136d,#15233e);color:#fff;font:inherit;line-height:1.55;box-shadow:0 2px 6px #0002;border-left:5px solid #61db9a} #eap-week-helper strong{font-size:19px;color:#fff;display:block} #eap-week-helper small{color:#fff;display:block;font-size:13px} #eap-week-helper .eap-source{margin-top:0;font-size:13px;line-height:inherit;color:#d8f8e6;font-weight:400} #eap-week-helper .eap-source-meta{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 12px;font-size:13px;color:#d8f8e6;font-weight:400} #eap-week-helper .eap-source-refresh{appearance:none;background:none;border:0;padding:0;margin:0;color:inherit;font:inherit;line-height:inherit;white-space:nowrap;cursor:pointer;box-shadow:none} #eap-week-helper .eap-source-refresh:hover,#eap-week-helper .eap-source-refresh:focus-visible{text-decoration:underline!important} #eap-week-helper .eap-source-refresh:disabled{opacity:.7;cursor:default} .eap-current-week{outline:3px solid #17894b!important;outline-offset:3px!important;}`;
   document.head.append(style);
   function update(){
-    const k=key(), idx=schedule.findIndex(r=>k>=r[1]&&k<=r[2]), cur=schedule[idx];
+    const k=key();
+    // A borrowed schedule must never carry over into a different study period.
+    if(sourceCourse&&sourceCourse!==courseId&&!activeOn(schedule,k)){schedule=[];lastUpdated=null;sourceCourse=null;sourceName='';restore();}
+    const idx=schedule.findIndex(r=>k>=r[1]&&k<=r[2]), cur=schedule[idx];
     let banner=document.getElementById('eap-week-helper');
     if(!banner){
       const target=document.querySelector('#region-main')||document.querySelector('main')||document.querySelector('#page-content');
@@ -136,7 +226,7 @@
       banner=document.createElement('aside'); banner.id='eap-week-helper'; banner.setAttribute('aria-label','Τρέχουσα εβδομάδα μελέτης'); target.prepend(banner);
     }
     let title, dates='';
-    if(!schedule.length){title="📚 Χρονοδιάγραμμα μελέτης μη διαθέσιμο";dates="Άνοιξε μία Θεματική Ενότητα για αυτόματη ανάκτηση.";}else if(cur){
+    if(!schedule.length){title="📚 Χρονοδιάγραμμα μελέτης μη διαθέσιμο";dates="Άνοιξε μία Θεματική Ενότητα που διαθέτει χρονοδιάγραμμα Excel.";}else if(cur){
       title=cur[0] ? `📚 Τρέχουσα εβδομάδα μελέτης: ${cur[0]}η από ${schedule.filter(r=>r[0]).length}` : (cur[3] || 'Διακοπές');
       dates=`${day(cur[1])} – ${day(cur[2])}`;
     }else{
@@ -151,8 +241,9 @@
     const actions=document.createElement('div');actions.className='eap-source-meta';
     if(lastUpdated!==null){const t=document.createElement('time');t.dateTime=new Date(lastUpdated).toISOString();t.textContent='Τελευταία ενημέρωση από Χρονοδιάγραμμα ΘΕ: '+updatedFmt.format(new Date(lastUpdated));t.title='Τελευταία επιτυχής ανάγνωση του Excel (ώρα Ελλάδας)';actions.append(t);}
     else if(schedule.length){actions.append(document.createTextNode('Ενημέρωση από Χρονοδιάγραμμα ΘΕ'));}
-    if(courseId){const refresh=document.createElement('button');refresh.type='button';refresh.className='eap-source-refresh';refresh.textContent=busy?'Ανάγνωση…':'↻ Ανανέωση';refresh.title='Ανάκτηση και ανάγνωση του επίσημου Excel από το Moodle';refresh.setAttribute('aria-label','Ανανέωση χρονοδιαγράμματος Θ.Ε.');refresh.disabled=busy;refresh.onclick=()=>sync(true);actions.append(refresh);}
+    if(courseId){const refresh=document.createElement('button');refresh.type='button';refresh.className='eap-source-refresh';refresh.textContent=busy?'Ανάγνωση…':'↻ Ανανέωση';refresh.title='Αναζήτηση χρονοδιαγράμματος Excel στην παρούσα Θ.Ε.';refresh.setAttribute('aria-label','Ανανέωση χρονοδιαγράμματος Θ.Ε.');refresh.disabled=busy;refresh.onclick=()=>sync(true);actions.append(refresh);}
     if(actions.childNodes.length)meta.append(actions);
+    if(sourceCourse&&sourceCourse!==courseId&&schedule.length){const provenance=document.createElement('div');provenance.append(document.createTextNode('Κοινό χρονοδιάγραμμα από: '));const a=document.createElement('a');a.href='/course/view.php?id='+encodeURIComponent(sourceCourse);a.textContent=sourceName||'Θ.Ε. '+sourceCourse;a.style.color='inherit';a.style.textDecoration='underline';provenance.append(a);meta.append(provenance);}
     if(source){const msg=document.createElement('div');msg.setAttribute('role','status');msg.textContent=source;meta.append(msg);}
     if(meta.childNodes.length)banner.append(meta);
     document.querySelectorAll('.eap-current-week').forEach(e=>e.classList.remove('eap-current-week'));
